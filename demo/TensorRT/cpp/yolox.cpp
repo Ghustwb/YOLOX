@@ -457,7 +457,7 @@ int main(int argc, char** argv) {
     else if(std::string(argv[2]) == "-video")
     {
         //cv::VideoCapture cap(input_video_path);
-        cv::VideoCapture cap("/home/lcg/Videos/test1.mp4");
+        cv::VideoCapture cap(0);
         if(!cap.isOpened())
         {
             std::cerr << input_video_path << " video is not opened!" << std::endl;
