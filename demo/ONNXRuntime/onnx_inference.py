@@ -9,7 +9,8 @@ import cv2
 import numpy as np
 
 import onnxruntime
-
+import sys
+sys.path.append("/home/lcg/YOLOX")
 from yolox.data.data_augment import preproc as preprocess
 from yolox.data.datasets import COCO_CLASSES
 from yolox.utils import mkdir, multiclass_nms, demo_postprocess, vis
@@ -21,14 +22,14 @@ def make_parser():
         "-m",
         "--model",
         type=str,
-        default="yolox.onnx",
+        default="/home/lcg/YOLOX/weights/yolox_nano.onnx",
         help="Input your onnx model.",
     )
     parser.add_argument(
         "-i",
         "--image_path",
         type=str,
-        default='test_image.png',
+        default='/home/lcg/YOLOX/assets/dog.jpg',
         help="Path to your input image.",
     )
     parser.add_argument(
@@ -48,7 +49,7 @@ def make_parser():
     parser.add_argument(
         "--input_shape",
         type=str,
-        default="640,640",
+        default="416,416",
         help="Specify an input shape for inference.",
     )
     parser.add_argument(
@@ -90,3 +91,5 @@ if __name__ == '__main__':
     mkdir(args.output_dir)
     output_path = os.path.join(args.output_dir, os.path.basename(args.image_path))
     cv2.imwrite(output_path, origin_img)
+    cv2.imshow("1",origin_img)
+    cv2.waitKey(0)

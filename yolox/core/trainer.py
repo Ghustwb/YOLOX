@@ -180,11 +180,11 @@ class Trainer:
             if self.args.logger == "tensorboard":
                 self.tblogger = SummaryWriter(os.path.join(self.file_name, "tensorboard"))
             elif self.args.logger == "wandb":
-                self.wandb_logger = WandbLogger.initialize_wandb_logger(
-                    self.args,
-                    self.exp,
-                    self.evaluator.dataloader.dataset
-                )
+                wandb_params = dict()
+                for k, v in zip(self.args.opts[0::2], self.args.opts[1::2]):
+                    if k.startswith("wandb-"):
+                        wandb_params.update({k[len("wandb-"):]: v})
+                self.wandb_logger = WandbLogger(config=vars(self.exp), **wandb_params)
             else:
                 raise ValueError("logger must be either 'tensorboard' or 'wandb'")
 
@@ -263,11 +263,8 @@ class Trainer:
 
             if self.rank == 0:
                 if self.args.logger == "wandb":
-                    metrics = {"train/" + k: v.latest for k, v in loss_meter.items()}
-                    metrics.update({
-                        "train/lr": self.meter["lr"].latest
-                    })
-                    self.wandb_logger.log_metrics(metrics, step=self.progress_in_iter)
+                    self.wandb_logger.log_metrics({k: v.latest for k, v in loss_meter.items()})
+                    self.wandb_logger.log_metrics({"lr": self.meter["lr"].latest})
 
             self.meter.clear_meters()
 
@@ -325,8 +322,8 @@ class Trainer:
                 evalmodel = evalmodel.module
 
         with adjust_status(evalmodel, training=False):
-            (ap50_95, ap50, summary), predictions = self.exp.eval(
-                evalmodel, self.evaluator, self.is_distributed, return_outputs=True
+            ap50_95, ap50, summary = self.exp.eval(
+                evalmodel, self.evaluator, self.is_distributed
             )
 
         update_best_ckpt = ap50_95 > self.best_ap
@@ -340,17 +337,16 @@ class Trainer:
                 self.wandb_logger.log_metrics({
                     "val/COCOAP50": ap50,
                     "val/COCOAP50_95": ap50_95,
-                    "train/epoch": self.epoch + 1,
+                    "epoch": self.epoch + 1,
                 })
-                self.wandb_logger.log_images(predictions)
             logger.info("\n" + summary)
         synchronize()
 
-        self.save_ckpt("last_epoch", update_best_ckpt, ap=ap50_95)
+        self.save_ckpt("last_epoch", update_best_ckpt)
         if self.save_history_ckpt:
-            self.save_ckpt(f"epoch_{self.epoch + 1}", ap=ap50_95)
+            self.save_ckpt(f"epoch_{self.epoch + 1}")
 
-    def save_ckpt(self, ckpt_name, update_best_ckpt=False, ap=None):
+    def save_ckpt(self, ckpt_name, update_best_ckpt=False):
         if self.rank == 0:
             save_model = self.ema_model.ema if self.use_model_ema else self.model
             logger.info("Save weights to {}".format(self.file_name))
@@ -359,7 +355,6 @@ class Trainer:
                 "model": save_model.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
                 "best_ap": self.best_ap,
-                "curr_ap": ap,
             }
             save_checkpoint(
                 ckpt_state,
@@ -369,14 +364,4 @@ class Trainer:
             )
 
             if self.args.logger == "wandb":
-                self.wandb_logger.save_checkpoint(
-                    self.file_name,
-                    ckpt_name,
-                    update_best_ckpt,
-                    metadata={
-                        "epoch": self.epoch + 1,
-                        "optimizer": self.optimizer.state_dict(),
-                        "best_ap": self.best_ap,
-                        "curr_ap": ap
-                    }
-                )
+                self.wandb_logger.save_checkpoint(self.file_name, ckpt_name, update_best_ckpt)
