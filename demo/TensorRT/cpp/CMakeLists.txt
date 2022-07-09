@@ -9,8 +9,10 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_BUILD_TYPE Debug)
 
 find_package(CUDA REQUIRED)
-
+include_directories(/usr/local/include/eigen3)
 include_directories(${PROJECT_SOURCE_DIR}/include)
+include_directories(${PROJECT_SOURCE_DIR}/track)
+include_directories(${PROJECT_SOURCE_DIR}/track/include)
 # include and link dirs of cuda and tensorrt, you need adapt them if yours are different
 # cuda
 include_directories(/usr/local/cuda/include)
@@ -27,7 +29,9 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wall -Ofast -Wfatal-errors -
 find_package(OpenCV)
 include_directories(${OpenCV_INCLUDE_DIRS})
 
-add_executable(yolox ${PROJECT_SOURCE_DIR}/yolox.cpp ${PROJECT_SOURCE_DIR}/main.cpp)
+file(GLOB My_Source_Files ${PROJECT_SOURCE_DIR}/track/src/*.cpp ${PROJECT_SOURCE_DIR}/yolox.cpp ${PROJECT_SOURCE_DIR}/main.cpp)
+
+add_executable(yolox ${My_Source_Files} )
 #add_executable(yolox ${PROJECT_SOURCE_DIR}/yolox_copy.cpp)
 target_link_libraries(yolox nvinfer)
 target_link_libraries(yolox cudart)

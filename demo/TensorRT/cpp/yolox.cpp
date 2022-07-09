@@ -1,4 +1,5 @@
 #include "yolox.h"
+using namespace Detect;
 
 YOLOX::YOLOX(std::string engine_file_path)
 {

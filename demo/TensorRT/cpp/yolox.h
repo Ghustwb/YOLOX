@@ -17,6 +17,7 @@
 
 using namespace nvinfer1;
 
+namespace Detect{
 struct Object
 {
     cv::Rect_<float> rect;
@@ -45,6 +46,7 @@ public:
     YOLOX(std::string engine_file_path);
     ~YOLOX();
     std::vector<Object> detect(cv::Mat& image);
+    void draw_objects(const cv::Mat& bgr, const std::vector<Object>& objects);
     
 private:
     IRuntime* runtime = nullptr;
@@ -64,8 +66,8 @@ private:
     void generate_yolox_proposals(std::vector<GridAndStride> grid_strides, float* feat_blob, float prob_threshold, std::vector<Object>& objects);
     float* blobFromImage(cv::Mat& img);
     void decode_outputs(float* prob, std::vector<Object>& objects, float scale, const int img_w, const int img_h);
-    void draw_objects(const cv::Mat& bgr, const std::vector<Object>& objects);
+   
 };
-
+}
 
 #endif // YOLOX_H
