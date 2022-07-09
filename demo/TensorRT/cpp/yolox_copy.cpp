@@ -1,53 +1,39 @@
-#include "yolox.h"
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <numeric>
+#include <chrono>
+#include <vector>
+#include <opencv2/opencv.hpp>
+#include <dirent.h>
+#include "NvInfer.h"
+#include "cuda_runtime_api.h"
+#include "logging.h"
 
-YOLOX::YOLOX(std::string engine_file_path)
-{
-    cudaSetDevice(DEVICE);
-    // create a model using the API directly and serialize it to a stream
-    char *trtModelStream{nullptr};
-    size_t size{0};
-    std::ifstream file(engine_file_path, std::ios::binary);
-    if (file.good()) {
-        file.seekg(0, file.end);
-        size = file.tellg();
-        file.seekg(0, file.beg);
-        trtModelStream = new char[size];
-        assert(trtModelStream);
-        file.read(trtModelStream, size);
-        file.close();
-    }
-    else {
-        std::cerr << "arguments not right!" << std::endl;
-        std::cerr << "run 'python3 yolox/deploy/trt.py -n yolox-{tiny, s, m, l, x}' to serialize model first!" << std::endl;
-        std::cerr << "Then use the following command:" << std::endl;
-        std::cerr << "./yolox ../model_trt.engine -image ../../../assets/dog.jpg  // deserialize file and run inference" << std::endl;
-        std::cerr << "./yolox ../model_trt.engine -video /home/Video/test.mp4  // deserialize file and run inference" << std::endl;
-    }
+#define CHECK(status) \
+    do\
+    {\
+        auto ret = (status);\
+        if (ret != 0)\
+        {\
+            std::cerr << "Cuda failure: " << ret << std::endl;\
+            abort();\
+        }\
+    } while (0)
 
-    runtime = createInferRuntime(gLogger);
-    assert(runtime != nullptr);
-    engine = runtime->deserializeCudaEngine(trtModelStream, size);
-    assert(engine != nullptr); 
-    context = engine->createExecutionContext();
-    assert(context != nullptr);
-    delete[] trtModelStream;
-    auto out_dims = engine->getBindingDimensions(1);
-    
-    for(int j=0;j<out_dims.nbDims;j++) {
-        output_size *= out_dims.d[j];
-    }
-    prob = new float[output_size];
-}
+#define DEVICE 0  // GPU id
+#define NMS_THRESH 0.45
+#define BBOX_CONF_THRESH 0.3
 
+using namespace nvinfer1;
 
-YOLOX::~YOLOX()
-{
-    // destroy the engine
-    context->destroy();
-    engine->destroy();
-    runtime->destroy();
-}
-
+// stuff we know about the network and the input/output blobs
+static const int INPUT_W = 640;
+static const int INPUT_H = 640;
+static const int NUM_CLASSES = 2;
+const char* INPUT_BLOB_NAME = "input_0";
+const char* OUTPUT_BLOB_NAME = "output_0";
+static Logger gLogger;
 
 cv::Mat static_resize(cv::Mat& img) {
     float r = std::min(INPUT_W / (img.cols*1.0), INPUT_H / (img.rows*1.0));
@@ -61,8 +47,21 @@ cv::Mat static_resize(cv::Mat& img) {
     return out;
 }
 
+struct Object
+{
+    cv::Rect_<float> rect;
+    int label;
+    float prob;
+};
 
-void YOLOX::generate_grids_and_stride(std::vector<int>& strides, std::vector<GridAndStride>& grid_strides)
+struct GridAndStride
+{
+    int grid0;
+    int grid1;
+    int stride;
+};
+
+static void generate_grids_and_stride(std::vector<int>& strides, std::vector<GridAndStride>& grid_strides)
 {
     for (auto stride : strides)
     {
@@ -78,13 +77,13 @@ void YOLOX::generate_grids_and_stride(std::vector<int>& strides, std::vector<Gri
     }
 }
 
-inline float YOLOX::intersection_area(const Object& a, const Object& b)
+static inline float intersection_area(const Object& a, const Object& b)
 {
     cv::Rect_<float> inter = a.rect & b.rect;
     return inter.area();
 }
 
-void YOLOX::qsort_descent_inplace(std::vector<Object>& faceobjects, int left, int right)
+static void qsort_descent_inplace(std::vector<Object>& faceobjects, int left, int right)
 {
     int i = left;
     int j = right;
@@ -121,7 +120,7 @@ void YOLOX::qsort_descent_inplace(std::vector<Object>& faceobjects, int left, in
     }
 }
 
-void YOLOX::qsort_descent_inplace(std::vector<Object>& objects)
+static void qsort_descent_inplace(std::vector<Object>& objects)
 {
     if (objects.empty())
         return;
@@ -129,7 +128,7 @@ void YOLOX::qsort_descent_inplace(std::vector<Object>& objects)
     qsort_descent_inplace(objects, 0, objects.size() - 1);
 }
 
-void YOLOX::nms_sorted_bboxes(const std::vector<Object>& faceobjects, std::vector<int>& picked, float nms_threshold)
+static void nms_sorted_bboxes(const std::vector<Object>& faceobjects, std::vector<int>& picked, float nms_threshold)
 {
     picked.clear();
 
@@ -164,7 +163,7 @@ void YOLOX::nms_sorted_bboxes(const std::vector<Object>& faceobjects, std::vecto
 }
 
 
-void YOLOX::generate_yolox_proposals(std::vector<GridAndStride> grid_strides, float* feat_blob, float prob_threshold, std::vector<Object>& objects)
+static void generate_yolox_proposals(std::vector<GridAndStride> grid_strides, float* feat_blob, float prob_threshold, std::vector<Object>& objects)
 {
 
     const int num_anchors = grid_strides.size();
@@ -208,7 +207,7 @@ void YOLOX::generate_yolox_proposals(std::vector<GridAndStride> grid_strides, fl
     } // point anchor loop
 }
 
-float* YOLOX::blobFromImage(cv::Mat& img){
+float* blobFromImage(cv::Mat& img){
     float* blob = new float[img.total()*3];
     int channels = 3;
     int img_h = img.rows;
@@ -228,7 +227,7 @@ float* YOLOX::blobFromImage(cv::Mat& img){
 }
 
 
-void YOLOX::decode_outputs(float* prob, std::vector<Object>& objects, float scale, const int img_w, const int img_h) {
+static void decode_outputs(float* prob, std::vector<Object>& objects, float scale, const int img_w, const int img_h) {
         std::vector<Object> proposals;
         std::vector<int> strides = {8, 16, 32};
         std::vector<GridAndStride> grid_strides;
@@ -270,8 +269,14 @@ void YOLOX::decode_outputs(float* prob, std::vector<Object>& objects, float scal
         }
 }
 
+const float color_list[2][3] =
+{
+    {0, 255, 100},
+    {100, 0, 255},
+    
+};
 
-void YOLOX::draw_objects(const cv::Mat& bgr, const std::vector<Object>& objects)
+static void draw_objects(const cv::Mat& bgr, const std::vector<Object>& objects, std::string f)
 {
     static const char* class_names[] = {
         "Face", "Plate"
@@ -320,14 +325,14 @@ void YOLOX::draw_objects(const cv::Mat& bgr, const std::vector<Object>& objects)
                     cv::FONT_HERSHEY_SIMPLEX, 0.4, txt_color, 1);
     }
 
-    //cv::imwrite("det_res.jpg", image);
-    //fprintf(stderr, "save vis file\n");
+    cv::imwrite("det_res.jpg", image);
+    fprintf(stderr, "save vis file\n");
     cv::imshow("image", image); 
     cv::waitKey(1); 
 }
 
 
-void YOLOX::doInference(IExecutionContext& context, float* input, float* output, const int output_size, cv::Size input_shape) {
+void doInference(IExecutionContext& context, float* input, float* output, const int output_size, cv::Size input_shape) {
     const ICudaEngine& engine = context.getEngine();
 
     // Pointers to input and output device buffers to pass to engine.
@@ -364,32 +369,134 @@ void YOLOX::doInference(IExecutionContext& context, float* input, float* output,
     CHECK(cudaFree(buffers[outputIndex]));
 }
 
-std::vector<Object> YOLOX::detect(cv::Mat& img) {
-    int img_w = img.cols;
-    int img_h = img.rows;
-    cv::Mat pr_img = static_resize(img);
-    std::cout << "blob image" << std::endl;
+int main(int argc, char** argv) {
+    cudaSetDevice(DEVICE);
+    // create a model using the API directly and serialize it to a stream
+    char *trtModelStream{nullptr};
+    size_t size{0};
 
-    float* blob;
-    blob = blobFromImage(pr_img);
-    float scale = std::min(INPUT_W / (img.cols*1.0), INPUT_H / (img.rows*1.0));
+    if (argc == 4 && ((std::string(argv[2]) == "-image") || std::string(argv[2]) == "-video")) {
+        const std::string engine_file_path {argv[1]};
+        std::ifstream file(engine_file_path, std::ios::binary);
+        if (file.good()) {
+            file.seekg(0, file.end);
+            size = file.tellg();
+            file.seekg(0, file.beg);
+            trtModelStream = new char[size];
+            assert(trtModelStream);
+            file.read(trtModelStream, size);
+            file.close();
+        }
+    } else {
+        std::cerr << "arguments not right!" << std::endl;
+        std::cerr << "run 'python3 yolox/deploy/trt.py -n yolox-{tiny, s, m, l, x}' to serialize model first!" << std::endl;
+        std::cerr << "Then use the following command:" << std::endl;
+        std::cerr << "./yolox ../model_trt.engine -image ../../../assets/dog.jpg  // deserialize file and run inference" << std::endl;
+        std::cerr << "./yolox ../model_trt.engine -video /home/Video/test.mp4  // deserialize file and run inference" << std::endl;
+        return -1;
+    }
+    std::string input_image_path;
+    std::string input_video_path;
 
-    // run inference
-    auto start = std::chrono::system_clock::now();
-    assert(prob != nullptr);
-    assert(output_size != 0);
-    doInference(*context, blob, prob, output_size, pr_img.size());
-    auto end = std::chrono::system_clock::now();
-    std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "ms" << std::endl;
+    if(std::string(argv[2]) == "-image")
+    {
+        input_image_path = argv[3];
+        input_video_path = "";
+    }
+    else if(std::string(argv[2]) == "-video")
+    {
+        input_image_path = "";
+        input_video_path = argv[3];
+    }
 
-    std::vector<Object> objects;
-    
-    decode_outputs(prob, objects, scale, img_w, img_h);
-    draw_objects(img, objects);
-    // delete the pointer to the float
-    delete blob;
-    return objects;
+
+    IRuntime* runtime = createInferRuntime(gLogger);
+    assert(runtime != nullptr);
+    ICudaEngine* engine = runtime->deserializeCudaEngine(trtModelStream, size);
+    assert(engine != nullptr); 
+    IExecutionContext* context = engine->createExecutionContext();
+    assert(context != nullptr);
+    delete[] trtModelStream;
+    auto out_dims = engine->getBindingDimensions(1);
+    auto output_size = 1;
+    for(int j=0;j<out_dims.nbDims;j++) {
+        output_size *= out_dims.d[j];
+    }
+    static float* prob = new float[output_size];
+
+    if(std::string(argv[2]) == "-image")
+    {
+        cv::Mat img = cv::imread(input_image_path);
+        if(img.empty())
+        {
+            std::cerr << "image is empty!" << std::endl;
+            return -1;
+        }
+        int img_w = img.cols;
+        int img_h = img.rows;
+        cv::Mat pr_img = static_resize(img);
+        std::cout << "blob image" << std::endl;
+
+        float* blob;
+        blob = blobFromImage(pr_img);
+        float scale = std::min(INPUT_W / (img.cols*1.0), INPUT_H / (img.rows*1.0));
+
+        // run inference
+        auto start = std::chrono::system_clock::now();
+        doInference(*context, blob, prob, output_size, pr_img.size());
+        auto end = std::chrono::system_clock::now();
+        std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "ms" << std::endl;
+
+        std::vector<Object> objects;
+        decode_outputs(prob, objects, scale, img_w, img_h);
+        draw_objects(img, objects, input_image_path);
+        // delete the pointer to the float
+        delete blob;
+
+    }
+    else if(std::string(argv[2]) == "-video")
+    {
+        //cv::VideoCapture cap(input_video_path);
+        cv::VideoCapture cap(0);
+        if(!cap.isOpened())
+        {
+            std::cerr << input_video_path << " video is not opened!" << std::endl;
+            return -1;
+        }
+        cv::Mat img;
+        while(1)
+        {
+            cap >> img;
+            if(img.empty())
+            {
+                std::cerr << "image is empty!" << std::endl;
+                return -1;
+            }
+            int img_w = img.cols;
+            int img_h = img.rows;
+            cv::Mat pr_img = static_resize(img);
+            std::cout << "blob image" << std::endl;
+
+            float* blob;
+            blob = blobFromImage(pr_img);
+            float scale = std::min(INPUT_W / (img.cols*1.0), INPUT_H / (img.rows*1.0));
+
+            // run inference
+            auto start = std::chrono::system_clock::now();
+            doInference(*context, blob, prob, output_size, pr_img.size());
+            auto end = std::chrono::system_clock::now();
+            std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "ms" << std::endl;
+
+            std::vector<Object> objects;
+            decode_outputs(prob, objects, scale, img_w, img_h);
+            draw_objects(img, objects, input_image_path);
+            // delete the pointer to the float
+            delete blob;
+        }
+    // destroy the engine
+    context->destroy();
+    engine->destroy();
+    runtime->destroy();
+    return 0;
 }
-
-
-
+}
