@@ -65,6 +65,7 @@ int main(int argc, char** argv) {
                 break;
             }
             std::vector<Detect::Object> objects = detector.detect(frame);
+            std::cout << "Detection Num: " << objects.size() << std::endl;
             vector<Object> objects_to_track ;
             Object tmp;
             for(auto& obj : objects)
@@ -77,13 +78,17 @@ int main(int argc, char** argv) {
                     objects_to_track.push_back(tmp);
                 }
             }
+            std::cout << "Track Update Num: " << objects_to_track.size() << std::endl;
             std::vector<STrack> output_stracks = tracker.update(objects_to_track);
 
+            std::cout << "output_stracks Num: " << output_stracks.size() << std::endl;
 
             for (int i = 0; i < output_stracks.size(); i++)
             {
                 std::vector<float> tlwh = output_stracks[i].tlwh;
-                bool vertical = tlwh[2] / tlwh[3] > 1.6;
+                std::cout << "tlwh: " << tlwh[0] << " " << tlwh[1] << " " << tlwh[2] << " " << tlwh[3] << std::endl;
+                //bool vertical = tlwh[2] / tlwh[3] > 1.6; // limite width / height ratio less than 1.6
+                bool vertical = false;
                 if (tlwh[2] * tlwh[3] > 20 && !vertical)
                 {
                     cv::Scalar s = tracker.get_color(output_stracks[i].track_id);

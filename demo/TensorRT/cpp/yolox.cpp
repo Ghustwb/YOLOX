@@ -235,7 +235,7 @@ void YOLOX::decode_outputs(float* prob, std::vector<Object>& objects, float scal
         std::vector<GridAndStride> grid_strides;
         generate_grids_and_stride(strides, grid_strides);
         generate_yolox_proposals(grid_strides, prob,  BBOX_CONF_THRESH, proposals);
-        std::cout << "num of boxes before nms: " << proposals.size() << std::endl;
+        //std::cout << "num of boxes before nms: " << proposals.size() << std::endl;
 
         qsort_descent_inplace(proposals);
 
@@ -245,7 +245,7 @@ void YOLOX::decode_outputs(float* prob, std::vector<Object>& objects, float scal
 
         int count = picked.size();
 
-        std::cout << "num of boxes: " << count << std::endl;
+        //std::cout << "num of boxes: " << count << std::endl;
 
         objects.resize(count);
         for (int i = 0; i < count; i++)
@@ -284,8 +284,8 @@ void YOLOX::draw_objects(const cv::Mat& bgr, const std::vector<Object>& objects)
     {
         const Object& obj = objects[i];
 
-        fprintf(stderr, "%d = %.5f at %.2f %.2f %.2f x %.2f\n", obj.label, obj.prob,
-                obj.rect.x, obj.rect.y, obj.rect.width, obj.rect.height);
+        // fprintf(stderr, "%d = %.5f at %.2f %.2f %.2f x %.2f\n", obj.label, obj.prob,
+        //         obj.rect.x, obj.rect.y, obj.rect.width, obj.rect.height);
 
         cv::Scalar color = cv::Scalar(color_list[obj.label][0], color_list[obj.label][1], color_list[obj.label][2]);
         float c_mean = cv::mean(color)[0];
@@ -369,7 +369,7 @@ std::vector<Object> YOLOX::detect(cv::Mat& img) {
     int img_w = img.cols;
     int img_h = img.rows;
     cv::Mat pr_img = static_resize(img);
-    std::cout << "blob image" << std::endl;
+    //std::cout << "blob image" << std::endl;
 
     float* blob;
     blob = blobFromImage(pr_img);
@@ -381,7 +381,7 @@ std::vector<Object> YOLOX::detect(cv::Mat& img) {
     assert(output_size != 0);
     doInference(*context, blob, prob, output_size, pr_img.size());
     auto end = std::chrono::system_clock::now();
-    std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "ms" << std::endl;
+    //std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "ms" << std::endl;
 
     std::vector<Object> objects;
     

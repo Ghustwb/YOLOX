@@ -29,3 +29,16 @@ sudo apt-get install build-essential cmake git libgtk2.0-dev pkg-config libavcod
 ### Jeston 安装 torch 和 torchision
 
 [链接](https://qengineering.eu/install-pytorch-on-jetson-nano.html)
+
+
+
+
+**4，安装engine**
+```shell
+unzip eigen-3.3.9.zip
+cd eigen-3.3.9
+mkdir build
+cd build
+cmake ..
+sudo make install
+```
